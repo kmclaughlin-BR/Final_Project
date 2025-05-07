@@ -1,4 +1,4 @@
-// CS210 Final Project 
+// CS210: Final Project
 
 #include <iostream>
 #include <fstream>
@@ -11,189 +11,182 @@
 
 using namespace std;
 
-struct CityKey {
-    string countryCode;
-    string cityName;
+struct TrieNode {
+    unordered_map<char, TrieNode*> children;
+    unordered_map<string, string> cityData; // map of "countryCode_cityName" -> population
+    bool isEndOfWord = false;
+};
 
-    bool operator==(const CityKey& other) const {
-        return countryCode == other.countryCode && cityName == other.cityName;
+class Trie {
+private:
+    TrieNode* root;
+
+public:
+    Trie() : root(new TrieNode()) {}
+
+    void insert(const string& cityName, const string& countryCode, const string& population) {
+        TrieNode* node = root;
+        for (char ch : cityName) {
+            if (!node->children[ch])
+                node->children[ch] = new TrieNode();
+            node = node->children[ch];
+        }
+        node->isEndOfWord = true;
+        string key = countryCode + "_" + cityName;
+        node->cityData[key] = population;
+    }
+
+    bool search(const string& cityName, const string& countryCode, string& population) {
+        TrieNode* node = root;
+        for (char ch : cityName) {
+            if (!node->children[ch])
+                return false;
+            node = node->children[ch];
+        }
+        if (node->isEndOfWord) {
+            string key = countryCode + "_" + cityName;
+            auto it = node->cityData.find(key);
+            if (it != node->cityData.end()) {
+                population = it->second;
+                return true;
+            }
+        }
+        return false;
     }
 };
 
-struct CityKeyHash {
-    size_t operator()(const CityKey& key) const {
-        return hash<string>()(key.countryCode + "_" + key.cityName);
-    }
-};
-
-// Base Cache Class 
+// Cache Strategies (LFU, FIFO, Random)
 class Cache {
 protected:
     size_t capacity;
-
 public:
     Cache(size_t cap) : capacity(cap) {}
-    virtual bool get(const CityKey& key, string& population) = 0;
-    virtual void put(const CityKey& key, const string& population) = 0;
-    virtual void printCache() = 0;
+    virtual bool get(const string& key, string& value) = 0;
+    virtual void put(const string& key, const string& value) = 0;
     virtual ~Cache() = default;
 };
 
-// LFU Cache
 class LFUCache : public Cache {
 private:
-    unordered_map<CityKey, pair<string, int>, CityKeyHash> cache;
-    
+    unordered_map<string, pair<string, int>> cache;
+
 public:
     LFUCache(size_t cap) : Cache(cap) {}
 
-    bool get(const CityKey& key, string& population) override {
+    bool get(const string& key, string& value) override {
         auto it = cache.find(key);
         if (it == cache.end()) return false;
-        it->second.second++; // Increment frequency
-        population = it->second.first;
+        it->second.second++;
+        value = it->second.first;
         return true;
     }
 
-    void put(const CityKey& key, const string& population) override {
+    void put(const string& key, const string& value) override {
         if (cache.size() == capacity) {
-            auto leastFreq = min_element(cache.begin(), cache.end(), 
-                [](const auto& a, const auto& b) {
-                    return a.second.second < b.second.second;
-                });
+            auto leastFreq = min_element(cache.begin(), cache.end(),
+                [](const auto& a, const auto& b) { return a.second.second < b.second.second; });
             cache.erase(leastFreq->first);
         }
-        cache[key] = {population, 1};
-    }
-
-    void printCache() override {
-        cout << "\n[LFU Cache - City: Population (Frequency)]\n";
-        for (const auto& pair : cache) {
-            cout << pair.first.cityName << ", " << pair.first.countryCode 
-                 << " => " << pair.second.first << " (" << pair.second.second << ")\n";
-        }
+        cache[key] = {value, 1};
     }
 };
 
-// FIFO Cache
 class FIFOCache : public Cache {
 private:
-    list<pair<CityKey, string>> fifoList;
+    list<pair<string, string>> fifoList;
 
 public:
     FIFOCache(size_t cap) : Cache(cap) {}
 
-    bool get(const CityKey& key, string& population) override {
+    bool get(const string& key, string& value) override {
         for (auto& entry : fifoList) {
             if (entry.first == key) {
-                population = entry.second;
+                value = entry.second;
                 return true;
             }
         }
         return false;
     }
 
-    void put(const CityKey& key, const string& population) override {
+    void put(const string& key, const string& value) override {
         if (fifoList.size() == capacity) fifoList.pop_front();
-        fifoList.emplace_back(key, population);
-    }
-
-    void printCache() override {
-        cout << "\n[FIFO Cache - Oldest First]\n";
-        for (const auto& pair : fifoList) {
-            cout << pair.first.cityName << ", " << pair.first.countryCode 
-                 << " => " << pair.second << endl;
-        }
+        fifoList.emplace_back(key, value);
     }
 };
 
-// Random Replacement Cache
 class RandomCache : public Cache {
 private:
-    unordered_map<CityKey, string, CityKeyHash> cache;
-    vector<CityKey> keys;
+    unordered_map<string, string> cache;
+    vector<string> keys;
 
 public:
     RandomCache(size_t cap) : Cache(cap) {}
 
-    bool get(const CityKey& key, string& population) override {
+    bool get(const string& key, string& value) override {
         auto it = cache.find(key);
         if (it == cache.end()) return false;
-        population = it->second;
+        value = it->second;
         return true;
     }
 
-    void put(const CityKey& key, const string& population) override {
+    void put(const string& key, const string& value) override {
         if (cache.size() == capacity) {
             random_device rd;
             mt19937 gen(rd());
             uniform_int_distribution<> dis(0, keys.size() - 1);
-            size_t randomIndex = dis(gen);
-            cache.erase(keys[randomIndex]);
-            keys.erase(keys.begin() + randomIndex);
+            cache.erase(keys[dis(gen)]);
         }
-        cache[key] = population;
+        cache[key] = value;
         keys.push_back(key);
-    }
-
-    void printCache() override {
-        cout << "\n[Random Cache - Random Order]\n";
-        for (const auto& key : keys) {
-            cout << key.cityName << ", " << key.countryCode << " => " << cache[key] << endl;
-        }
     }
 };
 
-// Utility Functions
 string toLower(const string& str) {
     string result = str;
     transform(result.begin(), result.end(), result.begin(), ::tolower);
     return result;
 }
 
-bool searchCity(const string& filename, const CityKey& key, string& population) {
+void loadTrieFromFile(Trie& trie, const string& filename) {
     ifstream file(filename);
-    if (!file.is_open()) return false;
+    if (!file.is_open()) {
+        cout << "Error opening file.\n";
+        return;
+    }
 
     string line;
-    getline(file, line); // Skip header
+    getline(file, line);
 
     while (getline(file, line)) {
         stringstream ss(line);
-        string code, city, pop;
-        getline(ss, code, ',');
-        getline(ss, city, ',');
-        getline(ss, pop, ',');
+        string countryCode, cityName, population;
+        getline(ss, countryCode, ',');
+        getline(ss, cityName, ',');
+        getline(ss, population, ',');
 
-        if (toLower(code) == key.countryCode && toLower(city) == key.cityName) {
-            population = pop;
-            return true;
-        }
+        trie.insert(toLower(cityName), toLower(countryCode), population);
     }
-    return false;
+    file.close();
 }
 
-// Main Program
 int main() {
-    const string filename = "world_cities.csv";
+    Trie trie;
+    loadTrieFromFile(trie, "world_cities.csv");
+
     Cache* cache = nullptr;
     int choice;
 
-    cout << "City Population Lookup\nChoose Caching Strategy:\n1. LFU\n2. FIFO\n3. Random\nYour choice: ";
+    cout << "Choose Caching Strategy:\n1. LFU\n2. FIFO\n3. Random\nYour choice: ";
     cin >> choice;
-    cin.ignore(); // Clear input buffer
+    cin.ignore();
 
-    switch (choice) {
-        case 1: cache = new LFUCache(10); break;
-        case 2: cache = new FIFOCache(10); break;
-        case 3: cache = new RandomCache(10); break;
-        default: 
-            cout << "Invalid choice. Exiting...\n"; 
-            return 0;
-    }
+    if (choice == 1) cache = new LFUCache(10);
+    else if (choice == 2) cache = new FIFOCache(10);
+    else if (choice == 3) cache = new RandomCache(10);
+    else return 0;
 
+    string city, country, population;
     while (true) {
-        string city, country;
         cout << "\nEnter city name (or 'exit' to quit): ";
         getline(cin, city);
         if (city == "exit") break;
@@ -201,19 +194,12 @@ int main() {
         cout << "Enter country code: ";
         getline(cin, country);
 
-        CityKey key{toLower(country), toLower(city)};
-        string population;
-
-        if (cache->get(key, population)) {
-            cout << "Cache Hit: Population of " << city << ", " << country << " is " << population << endl;
-        } else if (searchCity(filename, key, population)) {
-            cout << "File Search: Population of " << city << ", " << country << " is " << population << endl;
+        string key = toLower(country) + "_" + toLower(city);
+        if (cache->get(key, population)) cout << "Cache Hit: " << population << endl;
+        else if (trie.search(toLower(city), toLower(country), population)) {
+            cout << "Trie Search: " << population << endl;
             cache->put(key, population);
-        } else {
-            cout << "City not found in dataset.\n";
-        }
-
-        cache->printCache();
+        } else cout << "City not found.\n";
     }
 
     delete cache;
